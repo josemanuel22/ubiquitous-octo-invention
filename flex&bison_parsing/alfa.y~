@@ -1,0 +1,426 @@
+%{
+#include <stdio.h>
+#include "alfa.h"
+#include "generacion.h"
+#include "tablaHash.h"
+#include "tablaSimbolos.h"
+
+#define LOCAL 1
+#define GLOBAL 0
+
+extern FILE* outF;
+extern int yycolumn;
+extern int yycolumnO;
+extern int yylineno;
+extern int yylex(void);
+extern int tipoError;
+int yyerror(char *s);
+TABLA_HASH *tablaGlobal = NULL, *tablaLocal = NULL;
+int tipo_actual;
+int clase_actual;
+int tamanio_vector_actual;
+int pos_variable_local_actual = 1;
+int ambito;
+char spf[100];
+INFO_SIMBOLO * busq;
+int ncomp = 0;
+%}
+
+%union {
+	tipo_atributos atributos;
+}
+
+%token TOK_MAIN
+%token TOK_INT
+%token TOK_BOOLEAN 
+%token TOK_ARRAY
+%token TOK_FUNCTION
+%token TOK_IF
+%token TOK_ELSE
+%token TOK_WHILE 
+%token TOK_SCANF
+%token TOK_PRINTF 
+%token TOK_RETURN
+
+%token TOK_PUNTOYCOMA
+%token TOK_COMA 
+%token TOK_PARENTESISIZQUIERDO
+%token TOK_PARENTESISDERECHO 
+%token TOK_CORCHETEIZQUIERDO
+%token TOK_CORCHETEDERECHO
+%token TOK_LLAVEIZQUIERDA
+%token TOK_LLAVEDERECHA
+%token TOK_ASIGNACION
+%token TOK_MAS
+%token TOK_MENOS
+%token TOK_DIVISION
+%token TOK_ASTERISCO
+%token TOK_AND
+%token TOK_OR
+%token TOK_NOT
+%token TOK_IGUAL
+%token TOK_DISTINTO
+%token TOK_MENORIGUAL
+%token TOK_MAYORIGUAL
+%token TOK_MENOR
+%token TOK_MAYOR
+
+%token <atributos> TOK_IDENTIFICADOR
+
+%token <atributos> TOK_CONSTANTE_ENTERA
+%token <atributos> TOK_TRUE
+%token <atributos> TOK_FALSE
+
+%token TOK_ERROR
+
+%type <atributos> exp
+%type <atributos> comparacion
+%type <atributos> constante
+
+%left TOK_MAS TOK_MENOS TOK_OR
+%left TOK_ASTERISCO TOK_DIVISION TOK_AND
+%right MENOSU TOK_NOT
+
+%%
+
+programa: inicio TOK_MAIN TOK_LLAVEIZQUIERDA declaraciones escritura_main funciones sentencias TOK_LLAVEDERECHA fin { yycolumnO = yycolumn; fprintf( outF, ";R1:	<programa> ::= main { <declaraciones> <funciones> <sentencias> }\n" ); };
+
+inicio: { tablaGlobal = crear_tabla(1000);
+	escribir_cabecera_compatibilidad( outF );
+	escribir_subseccion_data( outF );
+	escribir_cabecera_bss( outF );
+	ambito = GLOBAL;
+};
+
+escritura_main: { escribir_segmento_codigo(outF);
+	escribir_inicio_main(outF);
+};
+
+fin: { liberar_tabla( tablaGlobal );
+	escribir_fin( outF );
+};
+
+declaraciones: declaracion { yycolumnO = yycolumn; fprintf( outF, ";R2:	<declaraciones> ::= <declaracion>\n" ); }
+	| declaracion declaraciones { yycolumnO = yycolumn; fprintf( outF, ";R3:	<declaraciones> ::= <declaracion> <declaraciones>\n" ); };
+
+declaracion: clase identificadores TOK_PUNTOYCOMA { yycolumnO = yycolumn; fprintf( outF, ";R4:	<declaracion> ::= <clase> <identificadores> ;\n" ); };
+
+clase: clase_escalar { yycolumnO = yycolumn; fprintf( outF, ";R5:	<clase> ::= <clase_escalar>\n" ); clase_actual = ESCALAR; tamanio_vector_actual = 1; }
+	| clase_vector { yycolumnO = yycolumn; fprintf( outF, ";R7:	<clase> ::= <clase_vector>\n" ); clase_actual = VECTOR; };
+
+clase_escalar: tipo { yycolumnO = yycolumn; fprintf( outF, ";R9:	<clase_escalar> ::= <tipo>\n" ); };
+
+tipo: TOK_INT { yycolumnO = yycolumn; fprintf( outF, ";R10:	<tipo> ::= int\n" ); tipo_actual = ENTERO; }
+	| TOK_BOOLEAN { yycolumnO = yycolumn; fprintf( outF, ";R11:	<tipo> ::= boolean\n" ); tipo_actual = BOOLEANO; };
+
+clase_vector: TOK_ARRAY tipo TOK_CORCHETEIZQUIERDO TOK_CONSTANTE_ENTERA TOK_CORCHETEDERECHO { yycolumnO = yycolumn; fprintf( outF, ";R15:	<clase_vector> ::= array <tipo> [ <constante_entera> ]\n" );
+	tamanio_vector_actual = $4.valor_entero;
+	if( tamanio_vector_actual < 0 || tamanio_vector_actual > MAX_TAMANIO_VECTOR ) {
+		fprintf(stderr, "Error semantico: longitud de vector invalida: %d\n",tamanio_vector_actual );
+		return 1;
+	}
+};
+
+identificadores: identificador { yycolumnO = yycolumn; fprintf( outF, ";R18:	<identificadores> ::= <identificador>\n" ); }
+	| identificador TOK_COMA identificadores { yycolumnO = yycolumn; fprintf( outF, ";R19:	<identificadores> ::= <identificador> , <identificadores>\n" ); };
+
+funciones: funcion funciones { yycolumnO = yycolumn; fprintf( outF, ";R20:	<funciones> ::= <funcion> <funciones>\n" ); }
+	| { yycolumnO = yycolumn; fprintf( outF, ";R21:	<funciones> ::= \n" ); };
+
+funcion: TOK_FUNCTION tipo identificador TOK_PARENTESISIZQUIERDO parametros_funcion TOK_PARENTESISDERECHO TOK_LLAVEIZQUIERDA declaraciones_funcion sentencias TOK_LLAVEDERECHA { yycolumnO = yycolumn; fprintf( outF, ";R22:	<funcion> ::= function <tipo> <identificador> ( <parametros_funcion> ) { <declaraciones_funcion> <sentencias> }\n" ); };
+
+parametros_funcion: parametro_funcion resto_parametros_funcion { yycolumnO = yycolumn; fprintf( outF, ";R23:	<parametros_funcion> ::= <parametro_funcion> <resto_parametros_funcion>\n" ); }
+	| { yycolumnO = yycolumn; fprintf( outF, ";R24:	<parametros_funcion> ::=\n" ); };
+
+resto_parametros_funcion: TOK_PUNTOYCOMA parametro_funcion resto_parametros_funcion { yycolumnO = yycolumn; fprintf( outF, ";R25:	<resto_parametros_funcion> ::= ; <parametro_funcion> <resto_parametros_funcion>\n" ); }
+	| { yycolumnO = yycolumn; fprintf( outF, ";R26:	<resto_parametros_funcion> ::=\n" ); };
+
+parametro_funcion: tipo identificador { yycolumnO = yycolumn; fprintf( outF, ";R27:	<parametro_funcion> ::= <tipo> <identificador>\n" ); };
+
+declaraciones_funcion: declaraciones { yycolumnO = yycolumn; fprintf( outF, ";R28:	<declaraciones_funcion> ::= <declaraciones>\n" ); }
+	| { yycolumnO = yycolumn; fprintf( outF, ";R29:	<declaraciones_funcion> ::=\n" ); };
+
+sentencias:	sentencia { yycolumnO = yycolumn; fprintf( outF, ";R30:	<sentencias> ::= <sentencia>\n" ); }
+	| sentencia sentencias { yycolumnO = yycolumn; fprintf( outF, ";R31:	<sentencias> ::= <sentencia> <sentencias>\n" ); };
+
+sentencia: sentencia_simple TOK_PUNTOYCOMA { yycolumnO = yycolumn; fprintf( outF, ";R32:	<sentencia> ::= <sentencia_simple> ;\n" ); }
+	| bloque { yycolumnO = yycolumn; fprintf( outF, ";R33:	<sentencia> ::= <bloque>\n" ); };
+
+sentencia_simple: asignacion { yycolumnO = yycolumn; fprintf( outF, ";R34:	<sentencia_simple> ::= <asignacion>\n" ); }
+	| lectura { yycolumnO = yycolumn; fprintf( outF, ";R35:	<sentencia_simple> ::= <lectura>\n" ); }
+	| escritura { yycolumnO = yycolumn; fprintf( outF, ";R36:	<sentencia_simple> ::= <escritura>\n" ); }
+	| retorno_funcion { yycolumnO = yycolumn; fprintf( outF, ";R38:	<sentencia_simple> ::= <retorno_funcion>\n" ); };
+
+bloque: condicional { yycolumnO = yycolumn; fprintf( outF, ";R40:	<bloque> ::= <condicional>\n" ); }
+	|bucle { yycolumnO = yycolumn; fprintf( outF, ";R41:	<bloque> ::= <bucle>\n" ); };
+
+asignacion: TOK_IDENTIFICADOR TOK_ASIGNACION exp { yycolumnO = yycolumn; fprintf( outF, ";R43:	<asignacion> ::= <identificador> = <exp>\n" );
+		if( ambito == LOCAL ) {
+			busq = buscar_simbolo( tablaLocal, $1.lexema );
+			if( busq == NULL )busq = buscar_simbolo( tablaGlobal, $1.lexema );
+		}
+		else busq = buscar_simbolo( tablaGlobal, $1.lexema );
+		if( busq != NULL ) {
+			if( busq->tipo == $3.tipo ) {
+				asignar( outF, $1.lexema, !($3.es_direccion) );
+			}
+			else {
+				fprintf(stderr, "Error semantico: asignacion de tipos distintos en [lin %d, col %d]\n", yylineno, yycolumnO );
+				return 1;
+			}
+		}
+		else {
+			fprintf(stderr, "Error semantico: identificador %s no declarado en [lin %d, col %d]\n", $1.lexema, yylineno, yycolumnO );
+			return 1;
+		}
+	}
+	| elemento_vector TOK_ASIGNACION exp	{ yycolumnO = yycolumn; fprintf( outF, ";R44:	<asignacion> ::= <elemento_vector> = <exp>\n" ); };
+
+elemento_vector: TOK_IDENTIFICADOR TOK_CORCHETEIZQUIERDO exp TOK_CORCHETEDERECHO { yycolumnO = yycolumn; fprintf( outF, ";R48:	<elemento_vector> ::= <identificador> [ <exp> ]\n" ); };
+
+condicional: TOK_IF TOK_PARENTESISIZQUIERDO exp TOK_PARENTESISDERECHO TOK_LLAVEIZQUIERDA sentencias TOK_LLAVEDERECHA { yycolumnO = yycolumn; fprintf( outF, ";R50:	<condicional> ::= if ( <exp> ) { <sentencias> }\n" ); }
+	|TOK_IF TOK_PARENTESISIZQUIERDO exp TOK_PARENTESISDERECHO TOK_LLAVEIZQUIERDA sentencias TOK_LLAVEDERECHA TOK_ELSE TOK_LLAVEIZQUIERDA sentencias TOK_LLAVEDERECHA { yycolumnO = yycolumn; fprintf( outF, ";R51:	<condicional> ::= if ( <exp> ) { <sentencias> } else { <sentencias> }\n" ); };
+
+bucle: TOK_WHILE TOK_PARENTESISIZQUIERDO exp TOK_PARENTESISDERECHO TOK_LLAVEIZQUIERDA sentencias TOK_LLAVEDERECHA { yycolumnO = yycolumn; fprintf( outF, ";R52:	<bucle> ::= while ( <exp> ) { <sentencias> }\n" ); };
+
+lectura: TOK_SCANF TOK_IDENTIFICADOR { yycolumnO = yycolumn; fprintf( outF, ";R54:	<lectura> ::= scanf <identificador>\n" ); };
+
+escritura: TOK_PRINTF exp { yycolumnO = yycolumn; fprintf( outF, ";R56:	<escritura> ::= printf <exp>\n" );
+	escribir( outF, !($2.es_direccion), $2.tipo );
+};
+
+retorno_funcion: TOK_RETURN  exp { yycolumnO = yycolumn; fprintf( outF, ";R61:	<retorno_funcion> ::= return <exp>\n" );};
+
+exp: exp TOK_MAS exp { yycolumnO = yycolumn; fprintf( outF, ";R72:	<exp> ::= <exp> + <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: suma con elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = ENTERO;
+		$$.es_direccion = 0;
+
+		sumar( outF, !($1.es_direccion), !($3.es_direccion) );
+	}
+	| exp TOK_MENOS exp { yycolumnO = yycolumn; fprintf( outF, ";R73:	<exp> ::= <exp> - <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: resta con elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = ENTERO;
+		$$.es_direccion = 0;
+
+		restar( outF, !($1.es_direccion), !($3.es_direccion) );
+	}
+	| exp TOK_DIVISION exp { yycolumnO = yycolumn; fprintf( outF, ";R74:	<exp> ::= <exp> / <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: division con elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = ENTERO;
+		$$.es_direccion = 0;
+
+		dividir( outF, !($1.es_direccion), !($3.es_direccion) );
+	}
+	| exp TOK_ASTERISCO exp { yycolumnO = yycolumn; fprintf( outF, ";R75:	<exp> ::= <exp> * <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: multiplicacion con elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = ENTERO;
+		$$.es_direccion = 0;
+
+		multiplicar( outF, !($1.es_direccion), !($3.es_direccion) );
+	}
+	| TOK_MENOS exp { yycolumnO = yycolumn; fprintf( outF, ";R76:	<exp> ::= - <exp>\n" );
+		if( $2.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: cambio de signo de un elemento no entero en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = ENTERO;
+		$$.es_direccion = 0;
+
+		cambiar_signo( outF, !($2.es_direccion) );
+	}
+	| exp TOK_AND exp { yycolumnO = yycolumn; fprintf( outF, ";R77:	<exp> ::= <exp> && <exp>\n" );
+		if( $1.tipo != BOOLEANO || $3.tipo != BOOLEANO ) {
+			fprintf(stderr, "Error semantico: and con elementos no booleanos en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+
+		y( outF, !($1.es_direccion), !($3.es_direccion) );
+	}
+	| exp TOK_OR exp { yycolumnO = yycolumn; fprintf( outF, ";R78:	<exp> ::= <exp> || <exp>\n" );
+		if( $1.tipo != BOOLEANO || $3.tipo != BOOLEANO ) {
+			fprintf(stderr, "Error semantico: or con elementos no booleanos en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+
+		o( outF, !($1.es_direccion), !($3.es_direccion) );
+	}
+	| TOK_NOT exp { yycolumnO = yycolumn; fprintf( outF, ";R79:	<exp> ::= ! <exp>\n" );
+		if( $2.tipo != BOOLEANO ) {
+			fprintf(stderr, "Error semantico: not de un elemento no booleano en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+
+		no( outF, !($2.es_direccion), ncomp );
+		ncomp++;
+	}
+	| TOK_IDENTIFICADOR { yycolumnO = yycolumn; fprintf( outF, ";R80:	<exp> ::= <identificador>\n" );
+		if( ambito == LOCAL ) {
+			busq = buscar_simbolo( tablaLocal, $1.lexema );
+			if( busq == NULL )busq = buscar_simbolo( tablaGlobal, $1.lexema );
+		}
+		else busq = buscar_simbolo( tablaGlobal, $1.lexema );
+		if( busq != NULL ) {
+			escribir_operando( outF, $1.lexema, 1 );
+			$$.tipo = busq->tipo;
+			$$.es_direccion = 1;
+		}
+		else {
+			fprintf(stderr, "Error semantico: identificador %s no declarado en [lin %d, col %d]\n", $1.lexema, yylineno, yycolumnO );
+			return 1;
+		}
+	}
+	| constante { yycolumnO = yycolumn; fprintf( outF, ";R81:	<exp> ::= <constante>\n" );
+		$$.tipo = $1.tipo;
+		$$.es_direccion = 0;
+	}
+	| TOK_PARENTESISIZQUIERDO exp TOK_PARENTESISDERECHO { yycolumnO = yycolumn; fprintf( outF, ";R82:	<exp> ::= ( <exp> )\n" );
+		$$.tipo = $2.tipo;
+		$$.es_direccion = $2.es_direccion;
+	}
+	| TOK_PARENTESISIZQUIERDO comparacion TOK_PARENTESISDERECHO { yycolumnO = yycolumn; fprintf( outF, ";R83:	<exp> ::= ( <comparacion> )\n" );
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+	}
+	| elemento_vector { yycolumnO = yycolumn; fprintf( outF, ";R85:	<exp> ::= <elemento_vector>\n" ); }
+	| TOK_IDENTIFICADOR TOK_PARENTESISIZQUIERDO lista_expresiones TOK_PARENTESISDERECHO { yycolumnO = yycolumn; fprintf( outF, ";R88:	<exp> ::= <identificador> ( <lista_expresiones> )\n" ); }
+
+lista_expresiones: exp resto_lista_expresiones { yycolumnO = yycolumn; fprintf( outF, ";R89:	<lista_expresiones> ::= <exp> <resto_lista_expresiones>\n" ); }
+	| { yycolumnO = yycolumn; fprintf( outF, ";R90:	<lista_expresiones> ::=\n" ); };
+
+resto_lista_expresiones: TOK_COMA exp resto_lista_expresiones { yycolumnO = yycolumn; fprintf( outF, ";R91:	<resto_lista_expresiones> ::= , <exp> <resto_lista_expresiones>\n" ); }
+	| { yycolumnO = yycolumn; fprintf( outF, ";R92:	<resto_lista_expresiones> ::=\n" ); };
+
+comparacion: exp TOK_IGUAL exp { yycolumnO = yycolumn; fprintf( outF, ";R93:	<comparacion> ::= <exp> == <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: igual de elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+		/*a==b equivale a !(a-b)*/
+		restar( outF, !($1.es_direccion), !($3.es_direccion) );
+		no( outF, 1, ncomp );
+		ncomp++;
+	}
+	| exp TOK_DISTINTO exp { yycolumnO = yycolumn; fprintf( outF, ";R94:	<comparacion> ::= <exp> != <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: distinto de elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+		/*a!=b equivale a !!(a-b)*/
+		restar( outF, !($1.es_direccion), !($3.es_direccion) );
+		no( outF, 1, ncomp );
+		ncomp++;
+		no( outF, 1, ncomp );
+		ncomp++;
+	}
+	| exp TOK_MENORIGUAL exp { yycolumnO = yycolumn; fprintf( outF, ";R95:	<comparacion> ::= <exp> <= <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: menor o igual de elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+		menorigual( outF, !($1.es_direccion), !($3.es_direccion), ncomp );
+		ncomp++;
+	}
+	| exp TOK_MAYORIGUAL exp { yycolumnO = yycolumn; fprintf( outF, ";R96:	<comparacion> ::= <exp> >= <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: mayor o igual de elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+		mayorigual( outF, !($1.es_direccion), !($3.es_direccion), ncomp );
+		ncomp++;
+	}
+	| exp TOK_MENOR exp { yycolumnO = yycolumn; fprintf( outF, ";R97:	<comparacion> ::= <exp> < <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: menor de elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+		menor( outF, !($1.es_direccion), !($3.es_direccion), ncomp );
+		ncomp++;
+	}
+	| exp TOK_MAYOR exp { yycolumnO = yycolumn; fprintf( outF, ";R98:	<comparacion> ::= <exp> > <exp>\n" );
+		if( $1.tipo != ENTERO || $3.tipo != ENTERO ) {
+			fprintf(stderr, "Error semantico: menor de elementos no enteros en [lin %d, col %d]\n", yylineno, yycolumnO );
+			return 1;
+		}
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+		mayor( outF, !($1.es_direccion), !($3.es_direccion), ncomp );
+		ncomp++;
+	};
+
+constante: constante_logica { yycolumnO = yycolumn; fprintf( outF, ";R99:	<constante> ::= <constante_logica>\n" );
+		$$.tipo = BOOLEANO;
+		$$.es_direccion = 0;
+	}
+	| constante_entera { yycolumnO = yycolumn; fprintf( outF, ";R100:	<constante> ::= <constante_entera>\n" );
+		$$.tipo = ENTERO;
+		$$.es_direccion = 0;
+	};
+
+constante_logica: TOK_TRUE { yycolumnO = yycolumn; fprintf( outF, ";R102:	<constante_logica> ::= true\n" );
+		escribir_operando( outF, "1", 0 );
+	}
+	| TOK_FALSE { yycolumnO = yycolumn; fprintf( outF, ";R103:	<constante_logica> ::= false\n" );
+		escribir_operando( outF, "0", 0 );
+	};
+
+constante_entera: TOK_CONSTANTE_ENTERA { yycolumnO = yycolumn; fprintf( outF, ";R104:	<constante_entera> ::= TOK_CONSTANTE_ENTERA\n" );
+		sprintf( spf, "%d", $1.valor_entero );
+		escribir_operando( outF, spf, 0 );
+	}
+
+identificador: TOK_IDENTIFICADOR { yycolumnO = yycolumn; fprintf( outF, ";R108:	<identificador> ::= TOK_IDENTIFICADOR\n" );
+	if( ambito == GLOBAL ) {
+		if( insertar_simbolo( tablaGlobal, $1.lexema, VARIABLE, tipo_actual, clase_actual, tamanio_vector_actual, 0 ) == OK ) {
+			declarar_variable( outF, $1.lexema, tipo_actual, tamanio_vector_actual );
+		}
+		else {
+			fprintf(stderr, "Error semantico: identificador %s duplicado en [lin %d, col %d]\n", $1.lexema, yylineno, yycolumnO );
+			return 1;
+		}
+	}
+	else {
+		if( insertar_simbolo( tablaLocal, $1.lexema, VARIABLE, tipo_actual, clase_actual, tamanio_vector_actual, 0 ) == OK ) {
+			declarar_variable( outF, $1.lexema, tipo_actual, tamanio_vector_actual );
+		}
+		else {
+			fprintf(stderr, "Error semantico: identificador %s duplicado en [lin %d, col %d]\n", $1.lexema, yylineno, yycolumnO );
+			return 1;
+		}
+	}
+};
+
+%%
+
+int yyerror(char* s) {
+	if( !tipoError ) fprintf( stderr, "****Error sintactico en [lin %d, col %d]\n", yylineno, yycolumnO);
+	return 1;
+}

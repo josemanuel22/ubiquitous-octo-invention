@@ -1,0 +1,132 @@
+Useless nonterminals
+
+   fin
+
+
+Terminals which are not used
+
+   TOK_ERROR
+
+
+Useless rules
+
+    6 fin: /* empty */
+
+
+Grammar
+
+    0 $accept: programa $end
+
+    1 programa: date_1
+
+    2 date_1: tok_month tok_day tok_timestamp1
+
+    3 tok_month: TOK_MONTH
+
+    4 tok_day: TOK_DAY
+
+    5 tok_timestamp1: TOK_TIMESTAMP_1
+
+
+Terminals, with rules where they appear
+
+$end (0) 0
+error (256)
+TOK_MONTH (258) 3
+TOK_DAY (259) 4
+TOK_TIMESTAMP_1 (260) 5
+TOK_ERROR (261)
+
+
+Nonterminals, with rules where they appear
+
+$accept (7)
+    on left: 0
+programa (8)
+    on left: 1, on right: 0
+date_1 (9)
+    on left: 2, on right: 1
+tok_month (10)
+    on left: 3, on right: 2
+tok_day (11)
+    on left: 4, on right: 2
+tok_timestamp1 (12)
+    on left: 5, on right: 2
+
+
+state 0
+
+    0 $accept: . programa $end
+
+    TOK_MONTH  shift, and go to state 1
+
+    programa   go to state 2
+    date_1     go to state 3
+    tok_month  go to state 4
+
+
+state 1
+
+    3 tok_month: TOK_MONTH .
+
+    $default  reduce using rule 3 (tok_month)
+
+
+state 2
+
+    0 $accept: programa . $end
+
+    $end  shift, and go to state 5
+
+
+state 3
+
+    1 programa: date_1 .
+
+    $default  reduce using rule 1 (programa)
+
+
+state 4
+
+    2 date_1: tok_month . tok_day tok_timestamp1
+
+    TOK_DAY  shift, and go to state 6
+
+    tok_day  go to state 7
+
+
+state 5
+
+    0 $accept: programa $end .
+
+    $default  accept
+
+
+state 6
+
+    4 tok_day: TOK_DAY .
+
+    $default  reduce using rule 4 (tok_day)
+
+
+state 7
+
+    2 date_1: tok_month tok_day . tok_timestamp1
+
+    TOK_TIMESTAMP_1  shift, and go to state 8
+
+    tok_timestamp1  go to state 9
+
+
+state 8
+
+    5 tok_timestamp1: TOK_TIMESTAMP_1 .
+
+    $default  reduce using rule 5 (tok_timestamp1)
+
+
+state 9
+
+    2 date_1: tok_month tok_day tok_timestamp1 .
+
+    $default  reduce using rule 2 (date_1)
